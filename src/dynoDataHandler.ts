@@ -7,10 +7,12 @@ const fs = require('fs');
 export class DataSet {
   constructor(testIndicator = 'Test_State') {
     this.testIndicator = testIndicator;
+    this.parseErrors = [];
   }
   file: string;
   channels: Channel[];
   testIndicator: string;
+  parseErrors: string[];
 }
 
 class Channel {
@@ -35,6 +37,12 @@ class TestPoint {
   max: number;
 }
 
+interface Result {
+  mean: number;
+  min: number;
+  max: number;
+}
+
 export class DynoDataHandler extends EventEmitter {
   dataSet;
 
@@ -51,6 +59,7 @@ export class DynoDataHandler extends EventEmitter {
         this.dataSet = await this.parseFile(data);
         //dataSet.testPoints = this.getTestPoints(dataSet, 'Test_State');
         console.timeEnd(timerName);
+        console.log(this.dataSet.parseErrors);
         this.emit('finish'); // Emit the 'finish' event when parsing is done
       }
     });
@@ -73,6 +82,9 @@ export class DynoDataHandler extends EventEmitter {
           const dataPoint = parseFloat(elements[i]);
           if (!Number.isNaN(dataPoint)) {
             channelList[i].data.push(dataPoint);
+          } else {
+            dataSet.parseErrors.push(`${index + 1}:${channelList[i].name}`);
+            break;
           }
         }
       }
@@ -104,7 +116,11 @@ export class DynoDataHandler extends EventEmitter {
           isTestActive = false;
           let testPoint = new TestPoint();
           if (values.length > minLength) {
-            testPoint.average = this.processArray(values);
+            const { mean, min, max } = this.processArray(values);
+            testPoint.average = mean;
+            testPoint.min = min;
+            testPoint.max = max;
+            testPoint.data = values;
             channel.testPoints.push(testPoint);
           }
           values = [];
@@ -131,19 +147,17 @@ export class DynoDataHandler extends EventEmitter {
 
   printTestPoint(channels: Channel[], index: number, from: number = 0, to: number = 5) {
     let text = '';
-
     text += channels[index].name + ' ' + channels[index].unit + '\n';
-
     for (const point of channels[index].testPoints) {
       text += point.average + '\n';
     }
-
     text += 'len: ' + channels[index].testPoints.length;
     console.log(text);
   }
 
   getLinesOfString(data: string) {
-    return data.split('\n');
+    const lines = data.split('\n');
+    return lines.slice(0, -1);
   }
 
   processArray(data: number[]) {
@@ -156,9 +170,13 @@ export class DynoDataHandler extends EventEmitter {
       sum += number;
     }
 
-    const mean = sum / data.length;
+    const result: Result = {
+      mean: sum / data.length,
+      min: min,
+      max: max,
+    };
 
-    return mean;
+    return result;
   }
 
   getChannelByName(channels: Channel[], channelName: string) {
