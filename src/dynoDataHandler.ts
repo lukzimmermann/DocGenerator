@@ -1,5 +1,3 @@
-import { Test } from '@nestjs/testing';
-import { channel } from 'diagnostics_channel';
 import { EventEmitter } from 'events';
 
 const fs = require('fs');
@@ -33,12 +31,18 @@ class TestPoint {
   }
   data: number[];
   average: number;
+  median: number;
+  q1: number;
+  q3: number;
   min: number;
   max: number;
 }
 
 interface Result {
-  mean: number;
+  average: number;
+  median: number;
+  q1: number;
+  q3: number;
   min: number;
   max: number;
 }
@@ -57,9 +61,8 @@ export class DynoDataHandler extends EventEmitter {
       } else {
         this.dataSet = new DataSet();
         this.dataSet = await this.parseFile(data);
-        //dataSet.testPoints = this.getTestPoints(dataSet, 'Test_State');
         console.timeEnd(timerName);
-        console.log(this.dataSet.parseErrors);
+
         this.emit('finish'); // Emit the 'finish' event when parsing is done
       }
     });
@@ -116,10 +119,13 @@ export class DynoDataHandler extends EventEmitter {
           isTestActive = false;
           let testPoint = new TestPoint();
           if (values.length > minLength) {
-            const { mean, min, max } = this.processArray(values);
-            testPoint.average = mean;
-            testPoint.min = min;
-            testPoint.max = max;
+            const { average, median, q1, q3, min, max } = this.processArray(values);
+            testPoint.average = this.round(average, 100);
+            testPoint.median = this.round(median, 100);
+            testPoint.q1 = this.round(q1, 100);
+            testPoint.q3 = this.round(q3, 100);
+            testPoint.min = this.round(min, 100);
+            testPoint.max = this.round(max, 100);
             testPoint.data = values;
             channel.testPoints.push(testPoint);
           }
@@ -127,10 +133,16 @@ export class DynoDataHandler extends EventEmitter {
         }
       }
     }
-    //BSFC 39
-    this.printTestPoint(dataSet.channels, 39, 0, 14);
+    //Power 36
+    //BSFC  39
+    //RPM   26
+    this.printTestPoint(dataSet.channels, 26, 0, 14);
 
     return dataSet;
+  }
+
+  round(number: number, decimal: number) {
+    return Math.round(number * decimal) / decimal;
   }
 
   printChannel(channels: Channel[], index: number, from: number = 0, to: number = 5) {
@@ -147,9 +159,22 @@ export class DynoDataHandler extends EventEmitter {
 
   printTestPoint(channels: Channel[], index: number, from: number = 0, to: number = 5) {
     let text = '';
+    const width = 6;
     text += channels[index].name + ' ' + channels[index].unit + '\n';
     for (const point of channels[index].testPoints) {
-      text += point.average + '\n';
+      text +=
+        point.average.toString().padStart(width) +
+        '\t' +
+        point.min.toString().padStart(width) +
+        '\t' +
+        point.q1.toString().padStart(width) +
+        '\t' +
+        point.median.toString().padStart(width) +
+        '\t' +
+        point.q3.toString().padStart(width) +
+        '\t' +
+        point.max.toString().padStart(width) +
+        '\n';
     }
     text += 'len: ' + channels[index].testPoints.length;
     console.log(text);
@@ -170,13 +195,39 @@ export class DynoDataHandler extends EventEmitter {
       sum += number;
     }
 
+    data.sort((a, b) => a - b);
+    const [median, q1, q3] = this.getMedian(data);
+
     const result: Result = {
-      mean: sum / data.length,
+      average: sum / data.length,
+      median: median,
+      q1: q1,
+      q3: q3,
       min: min,
       max: max,
     };
 
     return result;
+  }
+
+  getMedian(sortedList: number[]): [median: number, q1: number, q3: number] {
+    const middleIndex = Math.floor(sortedList.length / 2);
+    const median = this.calculateMedian(sortedList);
+    const q1 = this.calculateMedian(sortedList.slice(0, middleIndex));
+    const q3 = this.calculateMedian(sortedList.slice(middleIndex, sortedList.length - 1));
+    return [median, q1, q3];
+  }
+
+  calculateMedian(sortedList: number[]) {
+    const middleIndex = Math.floor(sortedList.length / 2);
+    if (sortedList.length % 2 === 0) {
+      const middleElements = sortedList.slice(middleIndex - 1, middleIndex + 1);
+      const median = middleElements.reduce((a, b) => a + b) / middleElements.length;
+      return median;
+    } else {
+      const median = sortedList[middleIndex];
+      return median;
+    }
   }
 
   getChannelByName(channels: Channel[], channelName: string) {
